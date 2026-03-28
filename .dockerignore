@@ -1,0 +1,5 @@
+node-hp-scan-to/
+target/
+.git/
+.github/
+**/.DS_Store
