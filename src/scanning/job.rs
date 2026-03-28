@@ -7,7 +7,9 @@ use crate::scanner::escl::{
     create_scan_job, get_capabilities, get_next_document, get_scan_image_info, get_scanner_status,
 };
 use crate::scanner::models::scan_settings::{build_scan_settings, InputSource};
-use crate::scanner::models::scanner_status::{AdfState, JobState};
+use crate::scanner::models::scanner_status::{
+    AdfState, JobState, ScannerState, ScannerStatus,
+};
 use crate::scanning::dimensions::resolve_scan_region;
 use crate::scanning::pages::fix_jpeg_dimensions;
 
@@ -33,7 +35,9 @@ pub async fn execute_scan(
     config: &DestinationConfig,
 ) -> Result<Vec<ScannedPage>> {
     let caps = get_capabilities(client).await?;
-    let status = get_scanner_status(client).await?;
+
+    // Wait for the scanner to become idle before submitting the job.
+    let status = wait_for_idle(client).await?;
 
     // Choose input source: use ADF when paper is loaded and duplex is enabled
     // in config, or when paper is loaded and there's an ADF.
@@ -98,10 +102,7 @@ pub async fn execute_scan(
                 && matches!(j.job_state, JobState::Completed | JobState::Canceled)
         });
         // Also stop if the scanner says it's idle and we have at least one page.
-        let scanner_idle = matches!(
-            status.state,
-            crate::scanner::models::scanner_status::ScannerState::Idle
-        );
+        let scanner_idle = matches!(status.state, ScannerState::Idle);
 
         if job_done || (scanner_idle && !pages.is_empty()) {
             debug!("job done (job_done={job_done}, scanner_idle={scanner_idle})");
@@ -115,4 +116,22 @@ pub async fn execute_scan(
 
     info!("scan complete: {} page(s)", pages.len());
     Ok(pages)
+}
+
+/// Poll the scanner status until it reports `Idle`, up to ~30 seconds.
+async fn wait_for_idle(client: &ScannerClient) -> Result<ScannerStatus> {
+    const MAX_ATTEMPTS: u32 = 30;
+    for attempt in 1..=MAX_ATTEMPTS {
+        let status = get_scanner_status(client).await?;
+        if status.state == ScannerState::Idle {
+            return Ok(status);
+        }
+        debug!(
+            "scanner state: {:?} — waiting for Idle (attempt {attempt}/{MAX_ATTEMPTS})",
+            status.state
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    // Return last status even if not idle — let the caller decide.
+    get_scanner_status(client).await
 }

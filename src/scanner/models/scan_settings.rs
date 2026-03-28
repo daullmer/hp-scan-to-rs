@@ -19,36 +19,38 @@ pub fn build_scan_settings(
     };
 
     let duplex_element = if config.duplex && input_source == InputSource::Adf {
-        "<Duplex>true</Duplex>"
+        "\n  <scan:Duplex>true</scan:Duplex>"
     } else {
         ""
     };
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<ScanSettings xmlns="http://schemas.hp.com/imaging/escl/2011/05/03">
-  <Version>2.62</Version>
-  <Intent>Document</Intent>
-  <InputSource>{}</InputSource>
-  <XResolution>{}</XResolution>
-  <YResolution>{}</YResolution>
-  <ColorMode>{}</ColorMode>
-  {}
-  <ScanRegions>
-    <ScanRegion>
-      <Width>{}</Width>
-      <Height>{}</Height>
-      <ContentRegionUnits>escl:ThreeHundredthsOfInches</ContentRegionUnits>
-    </ScanRegion>
-  </ScanRegions>
-</ScanSettings>"#,
-        source,
-        config.resolution,
-        config.resolution,
-        color_mode,
-        duplex_element,
+<scan:ScanSettings xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03" xmlns:pwg="http://www.pwg.org/schemas/2010/12/sm">
+  <pwg:Version>2.0</pwg:Version>
+  <scan:Intent>TextAndGraphic</scan:Intent>
+  <pwg:ScanRegions pwg:MustHonor="true">
+    <pwg:ScanRegion>
+      <pwg:ContentRegionUnits>escl:ThreeHundredthsOfInches</pwg:ContentRegionUnits>
+      <pwg:Width>{}</pwg:Width>
+      <pwg:Height>{}</pwg:Height>
+      <pwg:XOffset>0</pwg:XOffset>
+      <pwg:YOffset>0</pwg:YOffset>
+    </pwg:ScanRegion>
+  </pwg:ScanRegions>
+  <pwg:DocumentFormat>image/jpeg</pwg:DocumentFormat>
+  <pwg:InputSource>{}</pwg:InputSource>
+  <scan:ColorMode>{}</scan:ColorMode>
+  <scan:XResolution>{}</scan:XResolution>
+  <scan:YResolution>{}</scan:YResolution>{}
+</scan:ScanSettings>"#,
         region.width,
         region.height,
+        source,
+        color_mode,
+        config.resolution,
+        config.resolution,
+        duplex_element,
     )
 }
 
