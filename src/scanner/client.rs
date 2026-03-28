@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::{Client, Response, StatusCode};
 use std::time::Duration;
+use tracing::{debug, trace};
 
 /// Low-level HTTP client for the HP scanner.
 /// All methods are thin wrappers around `reqwest` that add the base URL and
@@ -14,8 +15,10 @@ pub struct ScannerClient {
 impl ScannerClient {
     pub fn new(ip: &str) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(60))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(300))
             .no_proxy()
+            .http1_title_case_headers()
             .build()
             .context("failed to build HTTP client")?;
 
@@ -71,6 +74,7 @@ impl ScannerClient {
 
     /// POST XML to a full absolute URL.
     pub async fn post_xml_url(&self, url: &str, body: String) -> Result<Response> {
+        trace!("POST {url}\n{body}");
         let resp = self
             .client
             .post(url)
@@ -79,6 +83,7 @@ impl ScannerClient {
             .send()
             .await
             .with_context(|| format!("POST {url}"))?;
+        debug!("POST {url} => {}", resp.status());
         Ok(resp)
     }
 }

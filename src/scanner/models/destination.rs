@@ -2,16 +2,16 @@ use anyhow::Result;
 
 /// Build the XML body for a `POST /WalkupScanToComp/WalkupScanToCompDestinations` request.
 ///
-/// `label` becomes both `Hostname` (fixed identity) and `Name` (shown on scanner
-/// LCD). `Hostname` is set to the fixed string `"hp-scan-to-rs"` to avoid ties
-/// to the system hostname.
+/// `label` is used as both `Name` (shown on scanner LCD) and `Hostname`
+/// (the scanner groups destinations by hostname, so each label must have
+/// its own unique hostname to appear as a separate entry).
 pub fn build_destination_xml(label: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<WalkupScanToCompDestination xmlns="http://www.hp.com/schemas/imaging/con/ledm/walkupscantodestination/2010/09/28">
-  <Hostname>hp-scan-to-rs</Hostname>
-  <Name>{}</Name>
-  <LinkType>Network</LinkType>
+<WalkupScanToCompDestination xmlns="http://www.hp.com/schemas/imaging/con/ledm/walkupscan/2010/09/28" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.hp.com/schemas/imaging/con/ledm/walkupscan/2010/09/28 WalkupScanToComp.xsd">
+	<Hostname xmlns="http://www.hp.com/schemas/imaging/con/dictionaries/2009/04/06">{0}</Hostname>
+	<Name xmlns="http://www.hp.com/schemas/imaging/con/dictionaries/1.0/">{0}</Name>
+	<LinkType>Network</LinkType>
 </WalkupScanToCompDestination>"#,
         escape_xml(label)
     )
