@@ -1,11 +1,12 @@
 use anyhow::Result;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::destinations::DestinationMap;
 use crate::output::dispatch;
 use crate::scanner::client::ScannerClient;
 use crate::scanner::events::{poll_events, PollResult};
+use crate::scanner::walkup::{get_comp_event_type, CompEventType};
 use crate::scanning::job::execute_scan;
 
 /// Run the main event loop.
@@ -75,11 +76,22 @@ pub async fn run(
                 for event in events {
                     let Some(&dest_idx) = dest_map.get(&event.destination_uri) else {
                         // Event is for a destination we don't own — ignore.
+                        debug!("ignoring event for unknown destination {}", event.destination_uri);
                         continue;
                     };
 
                     let dest_config = &config.destinations[dest_idx];
-                    info!("scan triggered for {:?}", dest_config.label);
+                    info!("destination {:?} selected on scanner", dest_config.label);
+
+                    // Wait for the user to press the scan button.
+                    if let Some(ref comp_uri) = event.comp_event_uri {
+                        if !wait_for_scan_request(client, comp_uri).await {
+                            info!("scan cancelled or timed out for {:?}", dest_config.label);
+                            continue;
+                        }
+                    }
+
+                    info!("scan started for {:?}", dest_config.label);
 
                     match execute_scan(client, dest_config).await {
                         Err(e) => {
@@ -100,4 +112,31 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+/// Poll the WalkupScanToCompEvent endpoint until the user presses scan
+/// or the attempt times out / is cancelled.
+async fn wait_for_scan_request(client: &ScannerClient, comp_event_uri: &str) -> bool {
+    const MAX_ATTEMPTS: u32 = 50;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match get_comp_event_type(client, comp_event_uri).await {
+            Ok(CompEventType::ScanRequested | CompEventType::ScanNewPageRequested) => {
+                return true;
+            }
+            Ok(CompEventType::HostSelected) => {
+                debug!("waiting for scan button (attempt {attempt}/{MAX_ATTEMPTS})");
+            }
+            Ok(other) => {
+                debug!("comp event type: {other:?} — scan not proceeding");
+                return false;
+            }
+            Err(e) => {
+                warn!("failed to get comp event: {e}");
+                return false;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    warn!("timed out waiting for scan button");
+    false
 }

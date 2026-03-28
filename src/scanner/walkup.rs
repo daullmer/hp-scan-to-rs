@@ -36,12 +36,14 @@ pub async fn list_destinations(client: &ScannerClient) -> Result<Vec<RegisteredD
 /// Returns the resource URI path (e.g. `/WalkupScanToComp/WalkupScanToCompDestinations/1`).
 pub async fn register_destination(client: &ScannerClient, label: &str) -> Result<String> {
     let xml = build_destination_xml(label);
+    debug!("register_destination POST body:\n{xml}");
     let url = format!("{}{}", client.base_url(), DESTINATIONS_PATH);
     let resp = client.post_xml_url(&url, xml).await?;
     let status = resp.status();
     if status.as_u16() != 201 {
+        let body = resp.text().await.unwrap_or_default();
         bail!(
-            "POST {} returned {} (expected 201)",
+            "POST {} returned {} (expected 201)\nResponse body: {body}",
             DESTINATIONS_PATH,
             status
         );
@@ -76,4 +78,48 @@ pub async fn delete_destination(client: &ScannerClient, resource_uri: &str) -> R
         warn!("DELETE {resource_uri} returned {status}");
     }
     Ok(())
+}
+
+/// The type of WalkupScanToCompEvent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompEventType {
+    HostSelected,
+    ScanRequested,
+    ScanNewPageRequested,
+    ScanPagesComplete,
+    Unknown,
+}
+
+/// GET the WalkupScanToCompEvent endpoint and parse the event type.
+pub async fn get_comp_event_type(
+    client: &ScannerClient,
+    comp_event_uri: &str,
+) -> Result<CompEventType> {
+    let resp = client.get(comp_event_uri).await?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("GET {comp_event_uri} returned {status}");
+    }
+    let xml = resp.text().await?;
+    debug!("WalkupScanToCompEvent response:\n{xml}");
+    Ok(parse_comp_event_type(&xml))
+}
+
+fn parse_comp_event_type(xml: &str) -> CompEventType {
+    let doc = match roxmltree::Document::parse(xml) {
+        Ok(d) => d,
+        Err(_) => return CompEventType::Unknown,
+    };
+    for node in doc.root_element().descendants() {
+        if node.tag_name().name() == "WalkupScanToCompEventType" {
+            return match node.text().unwrap_or("") {
+                "HostSelected" => CompEventType::HostSelected,
+                "ScanRequested" => CompEventType::ScanRequested,
+                "ScanNewPageRequested" => CompEventType::ScanNewPageRequested,
+                "ScanPagesComplete" => CompEventType::ScanPagesComplete,
+                _ => CompEventType::Unknown,
+            };
+        }
+    }
+    CompEventType::Unknown
 }

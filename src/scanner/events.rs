@@ -13,6 +13,9 @@ pub struct ScanEvent {
     /// Resource URI of the destination the user selected, e.g.
     /// `/WalkupScanToComp/WalkupScanToCompDestinations/1`
     pub destination_uri: String,
+    /// Resource URI of the WalkupScanToCompEvent endpoint to poll for
+    /// the actual scan request (HostSelected → ScanRequested).
+    pub comp_event_uri: Option<String>,
 }
 
 /// Result of one poll operation.
@@ -65,6 +68,10 @@ pub async fn poll_events(client: &ScannerClient, etag: Option<&str>) -> Result<P
 }
 
 /// Extract scan destination selection events from the EventTable XML.
+///
+/// The scanner returns `<ev:Event>` nodes.  We look for those whose
+/// `<dd:UnqualifiedEventCategory>` is `"ScanEvent"`, then extract the
+/// destination and compEvent URIs from the `<ev:Payload>` children.
 fn parse_scan_events(xml: &str) -> Vec<ScanEvent> {
     let doc: roxmltree::Document = match roxmltree::Document::parse(xml) {
         Ok(d) => d,
@@ -73,36 +80,48 @@ fn parse_scan_events(xml: &str) -> Vec<ScanEvent> {
 
     let mut events = Vec::new();
 
-    for node in doc.root_element().descendants() {
-        // Look for <ScanEvent> or <WalkupScanToCompEvent> nodes that signal a
-        // destination was selected.
-        let name = node.tag_name().name();
-        if name == "ScanEvent" || name == "WalkupScanToCompEvent" {
-            let mut destination_uri = String::new();
-            let mut event_type = String::new();
+    for node in doc.root_element().children() {
+        if node.tag_name().name() != "Event" {
+            continue;
+        }
 
-            for child in node.descendants() {
+        // Check UnqualifiedEventCategory == "ScanEvent".
+        let is_scan_event = node.children().any(|c| {
+            c.tag_name().name() == "UnqualifiedEventCategory"
+                && c.text().map_or(false, |t| t == "ScanEvent")
+        });
+        if !is_scan_event {
+            continue;
+        }
+
+        let mut destination_uri = None;
+        let mut comp_event_uri = None;
+
+        // Each <ev:Payload> has a ResourceURI and ResourceType.
+        for payload in node.children().filter(|c| c.tag_name().name() == "Payload") {
+            let mut uri = None;
+            let mut rtype = None;
+            for child in payload.children() {
                 match child.tag_name().name() {
-                    "WalkupScanToCompDestinationURI" | "DestinationURI" => {
-                        destination_uri = child.text().unwrap_or("").to_string();
-                    }
-                    "WalkupScanToCompEventType" | "ScanEventType" => {
-                        event_type = child.text().unwrap_or("").to_string();
-                    }
+                    "ResourceURI" => uri = child.text().map(|t| t.to_string()),
+                    "ResourceType" => rtype = child.text().map(|t| t.to_string()),
                     _ => {}
                 }
             }
-
-            // We care about HostSelected (user touched the destination on LCD)
-            // and ScanRequested (scan button pressed).
-            let relevant = matches!(
-                event_type.as_str(),
-                "HostSelected" | "ScanRequested" | "ScanNewPageRequested" | ""
-            );
-
-            if relevant && !destination_uri.is_empty() {
-                events.push(ScanEvent { destination_uri });
+            if let (Some(u), Some(t)) = (uri, rtype) {
+                if t.contains("Destination") {
+                    destination_uri = Some(u);
+                } else if t.contains("CompEvent") {
+                    comp_event_uri = Some(u);
+                }
             }
+        }
+
+        if let Some(dest_uri) = destination_uri {
+            events.push(ScanEvent {
+                destination_uri: dest_uri,
+                comp_event_uri,
+            });
         }
     }
 
