@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
 
 mod app;
 mod config;
@@ -64,9 +65,6 @@ async fn main() -> Result<()> {
 
     let client = ScannerClient::new(&config.scanner.ip)?;
 
-    // Register destinations with the scanner.
-    let dest_map = destinations::register_all(&client, &config).await?;
-
     // Set up a shutdown channel driven by SIGINT / SIGTERM.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -90,11 +88,54 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
-    // Run the event loop.
-    let result = app::run(&client, &config, &dest_map, shutdown_rx).await;
+    // Outer loop: keeps retrying when the scanner is unreachable or goes
+    // offline.  Only exits on a clean shutdown signal.
+    loop {
+        if *shutdown_rx.borrow() {
+            break;
+        }
 
-    // Always clean up destinations before exiting.
-    destinations::deregister_all(&client, &dest_map).await;
+        // Try to register destinations — scanner may be powered off.
+        let dest_map = match destinations::register_all(&client, &config).await {
+            Ok(map) => map,
+            Err(e) => {
+                warn!("scanner not reachable: {e} — retrying in 30s");
+                if wait_or_shutdown(&mut shutdown_rx.clone(), Duration::from_secs(30)).await {
+                    break;
+                }
+                continue;
+            }
+        };
 
-    result
+        // Run the event loop (returns on error or shutdown).
+        let result = app::run(&client, &config, &dest_map, shutdown_rx.clone()).await;
+
+        // Best-effort cleanup.
+        destinations::deregister_all(&client, &dest_map).await;
+
+        match result {
+            Ok(()) => break, // clean shutdown
+            Err(e) => {
+                warn!("scanner connection lost: {e} — retrying in 30s");
+                if wait_or_shutdown(&mut shutdown_rx.clone(), Duration::from_secs(30)).await {
+                    break;
+                }
+            }
+        }
+    }
+
+    info!("exiting");
+    Ok(())
+}
+
+/// Sleep for `duration`, but return early if a shutdown signal arrives.
+/// Returns `true` if shutdown was requested.
+async fn wait_or_shutdown(
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    duration: Duration,
+) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => false,
+        _ = shutdown.changed() => true,
+    }
 }
