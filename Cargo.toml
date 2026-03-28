@@ -14,7 +14,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-printpdf = "0.8"
+lopdf = "0.40"
 chrono = "0.4"
 dirs = "6"
 base64 = "0.22"

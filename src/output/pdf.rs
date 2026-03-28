@@ -1,56 +1,93 @@
 use anyhow::{bail, Result};
-use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt, RawImage, XObjectTransform};
 
 use crate::scanning::job::ScannedPage;
 
-/// Points per millimetre (PDF user units = 1/72 inch; 1 mm = 72/25.4 pt).
-const PT_PER_MM: f32 = 72.0 / 25.4;
-
 /// Assemble a list of JPEG pages into a single multi-page PDF.
-/// Returns the raw PDF bytes.
+/// Embeds the JPEG bytes directly (DCTDecode) — no decode/re-encode cycle.
 pub fn pages_to_pdf(pages: &[ScannedPage]) -> Result<Vec<u8>> {
+    use lopdf::{Dictionary, Document, Object, Stream};
+
     if pages.is_empty() {
         bail!("cannot create PDF from zero pages");
     }
 
-    let mut doc = PdfDocument::new("Scan");
-    let mut pdf_pages: Vec<PdfPage> = Vec::with_capacity(pages.len());
-    let mut warnings: Vec<PdfWarnMsg> = Vec::new();
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let mut page_ids = Vec::with_capacity(pages.len());
 
     for page in pages {
-        let w_mm = page.width as f32 / page.resolution as f32 * 25.4;
-        let h_mm = page.height as f32 / page.resolution as f32 * 25.4;
+        let w_pt = page.width as f64 / page.resolution as f64 * 72.0;
+        let h_pt = page.height as f64 / page.resolution as f64 * 72.0;
 
-        // Decode JPEG into a RawImage that printpdf can embed.
-        let raw_image = RawImage::decode_from_bytes(&page.jpeg_bytes, &mut warnings)
-            .map_err(|e| anyhow::anyhow!("failed to decode JPEG: {e}"))?;
+        // Image XObject: embed raw JPEG bytes with DCTDecode.
+        let img_dict = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"XObject".to_vec())),
+            ("Subtype", Object::Name(b"Image".to_vec())),
+            ("Width", Object::Integer(page.width as i64)),
+            ("Height", Object::Integer(page.height as i64)),
+            ("ColorSpace", Object::Name(b"DeviceRGB".to_vec())),
+            ("BitsPerComponent", Object::Integer(8)),
+            ("Filter", Object::Name(b"DCTDecode".to_vec())),
+        ]);
+        let mut img_stream = Stream::new(img_dict, page.jpeg_bytes.clone());
+        img_stream.allows_compression = false; // already JPEG-compressed
+        let img_id = doc.add_object(img_stream);
 
-        let image_id = doc.add_image(&raw_image);
+        // Resources: map /Im1 to our image XObject.
+        let xobject_dict = Dictionary::from_iter(vec![("Im1", Object::Reference(img_id))]);
+        let resources = Dictionary::from_iter(vec![(
+            "XObject",
+            Object::Dictionary(xobject_dict),
+        )]);
 
-        // In PDF, an unscaled image XObject is 1×1 pt. We scale it to fill the
-        // page: scale factors equal the page dimensions in points.
-        let w_pt = w_mm * PT_PER_MM;
-        let h_pt = h_mm * PT_PER_MM;
+        // Content stream: draw the image scaled to the page size.
+        let content = format!(
+            "q {w:.4} 0 0 {h:.4} 0 0 cm /Im1 Do Q",
+            w = w_pt,
+            h = h_pt,
+        );
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
 
-        let transform = XObjectTransform {
-            translate_x: Some(Pt(0.0)),
-            translate_y: Some(Pt(0.0)),
-            scale_x: Some(w_pt),
-            scale_y: Some(h_pt),
-            ..Default::default()
-        };
-
-        let ops = vec![Op::UseXobject {
-            id: image_id,
-            transform,
-        }];
-
-        pdf_pages.push(PdfPage::new(Mm(w_mm), Mm(h_mm), ops));
+        // Page object.
+        let page_dict = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Page".to_vec())),
+            ("Parent", Object::Reference(pages_id)),
+            (
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Real(w_pt as f32),
+                    Object::Real(h_pt as f32),
+                ]),
+            ),
+            ("Resources", Object::Dictionary(resources)),
+            ("Contents", Object::Reference(content_id)),
+        ]);
+        let page_id = doc.add_object(page_dict);
+        page_ids.push(page_id);
     }
 
-    doc.with_pages(pdf_pages);
+    // Pages node.
+    let kids: Vec<Object> = page_ids.iter().map(|id| Object::Reference(*id)).collect();
+    let pages_dict = Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Pages".to_vec())),
+        ("Kids", Object::Array(kids)),
+        ("Count", Object::Integer(page_ids.len() as i64)),
+    ]);
+    doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
 
-    let bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
-    Ok(bytes)
+    // Catalog.
+    let catalog = Dictionary::from_iter(vec![
+        ("Type", Object::Name(b"Catalog".to_vec())),
+        ("Pages", Object::Reference(pages_id)),
+    ]);
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf)
+        .map_err(|e| anyhow::anyhow!("failed to write PDF: {e}"))?;
+    Ok(buf)
 }
 
