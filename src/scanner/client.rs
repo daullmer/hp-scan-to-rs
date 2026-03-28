@@ -58,19 +58,6 @@ impl ScannerClient {
         Ok(resp)
     }
 
-    pub async fn post_xml(&self, path: &str, body: String) -> Result<Response> {
-        let url = format!("{}{}", self.base, path);
-        let resp = self
-            .client
-            .post(&url)
-            .header("Content-Type", "text/xml")
-            .body(body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        Ok(resp)
-    }
-
     pub async fn delete(&self, path: &str) -> Result<StatusCode> {
         let url = format!("{}{}", self.base, path);
         let resp = self
@@ -80,17 +67,6 @@ impl ScannerClient {
             .await
             .with_context(|| format!("DELETE {url}"))?;
         Ok(resp.status())
-    }
-
-    /// GET a resource by its full absolute URL (returned from Location headers).
-    pub async fn get_url(&self, url: &str) -> Result<Response> {
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
-        Ok(resp)
     }
 
     /// POST XML to a full absolute URL.

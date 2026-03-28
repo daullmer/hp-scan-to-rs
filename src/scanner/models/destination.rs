@@ -33,7 +33,6 @@ pub struct RegisteredDestination {
     /// `/WalkupScanToComp/WalkupScanToCompDestinations/1`
     pub resource_uri: String,
     pub name: String,
-    pub hostname: String,
 }
 
 /// Parse the list response from
@@ -46,13 +45,11 @@ pub fn parse_destinations_list(xml: &str) -> Result<Vec<RegisteredDestination>> 
         if node.tag_name().name() == "WalkupScanToCompDestination" {
             let mut resource_uri = String::new();
             let mut name = String::new();
-            let mut hostname = String::new();
 
             for child in node.children() {
                 match child.tag_name().name() {
                     "ResourceURI" => resource_uri = child.text().unwrap_or("").to_string(),
                     "Name" => name = child.text().unwrap_or("").to_string(),
-                    "Hostname" => hostname = child.text().unwrap_or("").to_string(),
                     _ => {}
                 }
             }
@@ -61,7 +58,6 @@ pub fn parse_destinations_list(xml: &str) -> Result<Vec<RegisteredDestination>> 
                 destinations.push(RegisteredDestination {
                     resource_uri,
                     name,
-                    hostname,
                 });
             }
         }

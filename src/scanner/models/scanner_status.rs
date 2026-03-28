@@ -26,8 +26,6 @@ pub enum JobState {
 pub struct JobInfo {
     pub job_uri: String,
     pub job_state: JobState,
-    pub job_state_reason: String,
-    pub images_completed: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -83,8 +81,6 @@ pub fn parse_scanner_status(xml: &str) -> Result<ScannerStatus> {
 fn parse_job_info(node: roxmltree::Node) -> JobInfo {
     let mut job_uri = String::new();
     let mut job_state = JobState::Unknown(String::new());
-    let mut job_state_reason = String::new();
-    let mut images_completed = 0u32;
 
     for child in node.children() {
         match child.tag_name().name() {
@@ -97,12 +93,6 @@ fn parse_job_info(node: roxmltree::Node) -> JobInfo {
                     other => JobState::Unknown(other.to_string()),
                 };
             }
-            "JobStateReasons" | "JobStateReason" => {
-                job_state_reason = child.text().unwrap_or("").to_string();
-            }
-            "ImagesCompleted" => {
-                images_completed = child.text().and_then(|t| t.parse().ok()).unwrap_or(0);
-            }
             _ => {}
         }
     }
@@ -110,8 +100,6 @@ fn parse_job_info(node: roxmltree::Node) -> JobInfo {
     JobInfo {
         job_uri,
         job_state,
-        job_state_reason,
-        images_completed,
     }
 }
 
