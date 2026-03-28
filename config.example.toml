@@ -1,0 +1,48 @@
+[scanner]
+ip = "192.168.1.53"
+
+# ── Destination 1: save scans as PDF to a local directory ─────────────────
+[[destinations]]
+label = "Scan to Documents"
+output = "directory"
+directory = "~/Documents/Scans"
+format = "pdf"
+resolution = 300
+color_mode = "color"
+paper_size = "a4"
+duplex = false
+
+# ── Destination 2: save scans as JPEG to a different directory ───────────
+[[destinations]]
+label = "Scan Photos"
+output = "directory"
+directory = "~/Pictures/Scans"
+format = "jpeg"
+resolution = 600
+color_mode = "color"
+paper_size = "a4"
+duplex = false
+
+# ── Destination 3: email scan as PDF to alice ────────────────────────────
+[[destinations]]
+label = "Email Alice"
+output = "email"
+to = "alice@example.com"
+from = "scanner@company.com"
+subject = "Scan from HP"
+resolution = 200
+color_mode = "gray"
+paper_size = "a4"
+duplex = false
+
+# ── Destination 4: email scan as PDF to bob (duplex) ────────────────────
+[[destinations]]
+label = "Email Bob (duplex)"
+output = "email"
+to = "bob@example.com"
+from = "scanner@company.com"
+subject = "Scan from HP"
+resolution = 300
+color_mode = "color"
+paper_size = "a4"
+duplex = true
