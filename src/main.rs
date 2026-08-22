@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 mod app;
 mod config;
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
         let dest_map = match destinations::register_all(&client, &config).await {
             Ok(map) => map,
             Err(e) => {
-                warn!("scanner not reachable: {e} — retrying in 30s");
+                debug!("scanner not reachable: {e} — retrying in 30s");
                 if wait_or_shutdown(&mut shutdown_rx.clone(), Duration::from_secs(30)).await {
                     break;
                 }
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
         match result {
             Ok(()) => break, // clean shutdown
             Err(e) => {
-                warn!("scanner connection lost: {e} — retrying in 30s");
+                debug!("scanner connection lost: {e} — retrying in 30s");
                 if wait_or_shutdown(&mut shutdown_rx.clone(), Duration::from_secs(30)).await {
                     break;
                 }
