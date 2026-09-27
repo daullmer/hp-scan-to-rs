@@ -28,6 +28,8 @@ directory = "/scans"
 format = "pdf"
 resolution = 300
 color_mode = "color"
+# Optional: retain each unmodified JPEG returned by the scanner for debugging.
+raw_jpeg_directory = "/scans/raw"
 
 # Email scans as PDF
 [[destinations]]
@@ -55,6 +57,7 @@ color_mode = "gray"
 | `color_mode` | `"color"`, `"gray"`, or `"bw"`                       | `"color"` |
 | `paper_size` | `"a3"`, `"a4"`, `"a5"`, `"b5"`, `"letter"`, `"legal"`, `"max"` | `"a4"` |
 | `duplex`     | `true` / `false`                                     | `false`   |
+| `raw_jpeg_directory` | Local directory retaining unmodified scanner JPEG responses | — |
 
 ### Environment variables
 

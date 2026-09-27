@@ -1,4 +1,6 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use chrono::Local;
+use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::config::DestinationConfig;
@@ -7,11 +9,9 @@ use crate::scanner::escl::{
     create_scan_job, get_capabilities, get_next_document, get_scan_image_info, get_scanner_status,
 };
 use crate::scanner::models::scan_settings::{build_scan_settings, InputSource};
-use crate::scanner::models::scanner_status::{
-    AdfState, JobState, ScannerState, ScannerStatus,
-};
+use crate::scanner::models::scanner_status::{AdfState, JobState, ScannerState, ScannerStatus};
 use crate::scanning::dimensions::resolve_scan_region;
-use crate::scanning::pages::fix_jpeg_dimensions;
+use crate::scanning::pages::{fix_jpeg_dimensions, jpeg_dimensions};
 
 const MAX_503_RETRIES: u32 = 30;
 
@@ -51,13 +51,27 @@ pub async fn execute_scan(
 
     let duplex = config.duplex && input_source == InputSource::Adf && caps.has_adf_duplex;
     let region = resolve_scan_region(config, input_source, &caps, duplex);
-    debug!("scan region: {}×{} (1/300-inch units)", region.width, region.height);
+    debug!(
+        "scan region: {}×{} (1/300-inch units)",
+        region.width, region.height
+    );
 
     let settings_xml = build_scan_settings(config, &region, input_source);
     debug!("scan settings:\n{settings_xml}");
 
     let job_path = create_scan_job(client, settings_xml).await?;
     info!("scan job started: {job_path}");
+
+    let raw_jpeg_dir = config
+        .raw_jpeg_directory
+        .as_deref()
+        .map(expand_home_dir)
+        .transpose()?;
+    if let Some(dir) = &raw_jpeg_dir {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("create raw JPEG debug directory {dir:?}"))?;
+    }
+    let scan_timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
     let mut pages = Vec::new();
     let mut page_num = 0u32;
@@ -73,23 +87,32 @@ pub async fn execute_scan(
             }
             Some(jpeg_bytes) => {
                 page_num += 1;
-
-                // Fetch actual dimensions for this page.
-                let info = get_scan_image_info(client, &job_path).await.unwrap_or_else(|e| {
-                    warn!("could not fetch ScanImageInfo: {e} — using region dimensions");
-                    crate::scanner::models::scanner_status::ScanImageInfo {
-                        actual_width: region.width,
-                        actual_height: region.height,
-                    }
-                });
-
+                save_raw_jpeg(
+                    raw_jpeg_dir.as_ref(),
+                    &scan_timestamp,
+                    page_num,
+                    &jpeg_bytes,
+                )?;
+                let fallback_width = scale_escl_dimension(region.width, config.resolution);
+                let fallback_height = scale_escl_dimension(region.height, config.resolution);
+                let info = get_scan_image_info(client, &job_path)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("could not fetch ScanImageInfo: {e} — using DPI-scaled dimensions");
+                        crate::scanner::models::scanner_status::ScanImageInfo {
+                            actual_width: fallback_width,
+                            actual_height: fallback_height,
+                        }
+                    });
                 let fixed = fix_jpeg_dimensions(jpeg_bytes, info.actual_width, info.actual_height);
-                info!("page {page_num}: {}×{} px", info.actual_width, info.actual_height);
+                let (width, height) =
+                    jpeg_dimensions(&fixed).unwrap_or((info.actual_width, info.actual_height));
+                info!("page {page_num}: {width}×{height} px");
 
                 pages.push(ScannedPage {
                     jpeg_bytes: fixed,
-                    width: info.actual_width,
-                    height: info.actual_height,
+                    width,
+                    height,
                     resolution: config.resolution,
                 });
             }
@@ -116,6 +139,48 @@ pub async fn execute_scan(
 
     info!("scan complete: {} page(s)", pages.len());
     Ok(pages)
+}
+
+fn scale_escl_dimension(dimension: u32, resolution: u32) -> u32 {
+    dimension.saturating_mul(resolution).div_ceil(300)
+}
+
+fn save_raw_jpeg(
+    directory: Option<&PathBuf>,
+    scan_timestamp: &str,
+    page_num: u32,
+    jpeg_bytes: &[u8],
+) -> Result<()> {
+    let Some(directory) = directory else {
+        return Ok(());
+    };
+
+    let path = directory.join(format!("scan_{scan_timestamp}_raw_page{page_num:02}.jpg"));
+    std::fs::write(&path, jpeg_bytes)
+        .with_context(|| format!("write raw scanner JPEG to {path:?}"))?;
+    info!("saved raw scanner JPEG: {path:?}");
+    Ok(())
+}
+
+fn expand_home_dir(raw: &str) -> Result<PathBuf> {
+    if let Some(path) = raw.strip_prefix("~/") {
+        let home = dirs::home_dir().context("could not determine home directory")?;
+        Ok(home.join(path))
+    } else {
+        Ok(PathBuf::from(raw))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale_escl_dimension;
+
+    #[test]
+    fn scales_escl_dimensions_to_scan_resolution() {
+        assert_eq!(scale_escl_dimension(2480, 200), 1654);
+        assert_eq!(scale_escl_dimension(3508, 200), 2339);
+        assert_eq!(scale_escl_dimension(2480, 300), 2480);
+    }
 }
 
 /// Poll the scanner status until it reports `Idle`, up to ~30 seconds.

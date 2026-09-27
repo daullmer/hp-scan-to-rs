@@ -46,6 +46,8 @@ pub struct DestinationConfig {
     /// Enable duplex (double-sided) scanning — default false
     #[serde(default)]
     pub duplex: bool,
+    /// Optional directory for the unmodified JPEG responses from the scanner.
+    pub raw_jpeg_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

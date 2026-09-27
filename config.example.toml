@@ -11,6 +11,8 @@ resolution = 300
 color_mode = "color"
 paper_size = "a4"
 duplex = false
+# Optional: keep the exact JPEG bytes returned by the scanner for diagnosis.
+raw_jpeg_directory = "~/Documents/Scans/raw"
 
 # ── Destination 2: save scans as JPEG to a different directory ───────────
 [[destinations]]
