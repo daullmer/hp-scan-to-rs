@@ -29,8 +29,8 @@ struct ScanSettingsXml {
     x_resolution: u32,
     #[serde(rename = "scan:YResolution")]
     y_resolution: u32,
-    #[serde(rename = "scan:Duplex", skip_serializing_if = "Option::is_none")]
-    duplex: Option<bool>,
+    #[serde(rename = "scan:Duplex")]
+    duplex: bool,
 }
 
 #[derive(Serialize)]
@@ -72,11 +72,7 @@ pub fn build_scan_settings(
         InputSource::Adf => "Feeder",
     };
 
-    let duplex = if config.duplex && input_source == InputSource::Adf {
-        Some(true)
-    } else {
-        None
-    };
+    let duplex = config.duplex && input_source == InputSource::Adf;
 
     let settings = ScanSettingsXml {
         xmlns_scan: NS_SCAN,
@@ -84,7 +80,7 @@ pub fn build_scan_settings(
         version: "2.0",
         intent: "TextAndGraphic",
         scan_regions: ScanRegionsXml {
-            must_honor: "true",
+            must_honor: "false",
             scan_region: ScanRegionXml {
                 content_region_units: "escl:ThreeHundredthsOfInches",
                 width: region.width,
@@ -104,7 +100,9 @@ pub fn build_scan_settings(
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let mut ser = quick_xml::se::Serializer::new(&mut xml);
     ser.indent(' ', 2);
-    settings.serialize(ser).expect("scan settings XML serialization failed");
+    settings
+        .serialize(ser)
+        .expect("scan settings XML serialization failed");
     xml
 }
 
@@ -133,12 +131,16 @@ mod tests {
             color_mode: ColorMode::Color,
             paper_size: crate::config::PaperSize::A4,
             duplex: false,
+            raw_jpeg_directory: None,
         }
     }
 
     #[test]
     fn scan_settings_xml_has_correct_namespaces() {
-        let region = ScanRegion { width: 2480, height: 3508 };
+        let region = ScanRegion {
+            width: 2480,
+            height: 3508,
+        };
         let xml = build_scan_settings(&test_config(), &region, InputSource::Platen);
         println!("{xml}");
         assert!(xml.contains(r#"xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03""#));
@@ -146,6 +148,7 @@ mod tests {
         assert!(xml.contains("<pwg:Width>2480</pwg:Width>"));
         assert!(xml.contains("<scan:ColorMode>RGB24</scan:ColorMode>"));
         assert!(xml.contains("<pwg:InputSource>Platen</pwg:InputSource>"));
-        assert!(!xml.contains("<scan:Duplex>"));
+        assert!(xml.contains(r#"<pwg:ScanRegions pwg:MustHonor="false">"#));
+        assert!(xml.contains("<scan:Duplex>false</scan:Duplex>"));
     }
 }
